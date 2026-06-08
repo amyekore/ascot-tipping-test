@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ascot Tipping Leaderboard</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+</head>
+<body style="margin:0">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // ── GitHub Auto-Fetch ────────────────────────────────────────────────────────
+    // After creating your GitHub repo, paste the raw URL to your Excel file here.
+    // Format: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO_NAME/main/ascot_tipping_scoresheet.xlsx
+    const EXCEL_URL = "https://raw.githubusercontent.com/amyekore/ascot-tipping/main/ascot_tipping_scoresheet.xlsx";
+    // ────────────────────────────────────────────────────────────────────────────
+
+    const RACES = [
+      { name: "Norfolk Stakes",     time: "14:30", grade: "G2" },
+      { name: "King George V",      time: "15:05", grade: "Handicap" },
+      { name: "Ribblesdale Stakes", time: "15:40", grade: "G2" },
+      { name: "Gold Cup",           time: "16:20", grade: "G1" },
+      { name: "Britannia Stakes",   time: "17:00", grade: "Heritage" },
+      { name: "Hampton Court",      time: "17:35", grade: "G3" },
+    ];
+
+    const PLACE_LABELS = ["1st", "2nd", "3rd", "4th", "5th", "6th"];
+    const POINTS       = { 1:10, 2:6, 3:4, 4:3, 5:2, 6:1 };
+    const ADMIN_PASS   = "kore2026";
+
+    // ── Palette ─────────────────────────────────────────────
+    const GOLD  = "#d8c08a";
+    const GOLD2 = "#E8D5A3";
+    const PINK  = "#d43f84";
+    const TEXT1 = "#f7f3eb";
+    const TEXT2 = "#efe8dc";
+    const TEXT3 = "#d5d8e0";
+    const NAVY1 = "#00124f";
+    const NAVY2 = "#222c56";
+    // ────────────────────────────────────────────────────────
+
+    function loadFromStorage() {
+      try {
+        const lb = localStorage.getItem("lb-data");
+        const rr = localStorage.getItem("rr-data");
+        const ts = localStorage.getItem("lb-updated");
+        return {
+          leaderboard: lb ? JSON.parse(lb) : [],
+          raceResults: rr ? JSON.parse(rr) : [],
+          lastUpdate:  ts || null,
+        };
+      } catch { return { leaderboard: [], raceResults: [], lastUpdate: null }; }
+    }
+
+    function parseExcel(buffer) {
+      const wb = XLSX.read(buffer, { type: "array" });
+
+      // ── Picks & Scores sheet — one row per guest, authoritative ──
+      // Columns: #, Guest Name, Race1Pick, Race1Pts, Race2Pick, Race2Pts, ..., TOTAL
+      // Pts columns at indices 3,5,7,9,11,13 — TOTAL at index 14
+      const psSheet = wb.Sheets["Picks & Scores"];
+      const psRows  = XLSX.utils.sheet_to_json(psSheet, { header: 1 });
+      const PTS_COLS = [3, 5, 7, 9, 11, 13];
+      const leaderboard = psRows.slice(3)
+        .filter(r => r[1] && String(r[1]).trim() !== "")
+        .map(r => ({
+          name:    String(r[1]).trim(),
+          total:   Number(r[14]) || 0,
+          winners: PTS_COLS.filter(c => Number(r[c]) === 10).length,
+        }))
+        .sort((a, b) => b.total - a.total || b.winners - a.winners);
+
+      // ── Race Results sheet ─────────────────────────────────
+      const rrSheet = wb.Sheets["Race Results"];
+      const rrRows  = XLSX.utils.sheet_to_json(rrSheet, { header: 1 });
+      // data rows start at index 3, cols: race name | 1st..6th
+      const raceResults = rrRows.slice(3, 9).map(r => ({
+        name:   String(r[0] || "").replace(/\r\n/g, " "),
+        places: [r[1],r[2],r[3],r[4],r[5],r[6]].map(v => v ? String(v).trim() : ""),
+      }));
+
+      return { leaderboard, raceResults };
+    }
+
+    function App() {
+      const saved = loadFromStorage();
+      const [leaderboard, setLeaderboard] = useState(saved.leaderboard);
+      const [raceResults, setRaceResults] = useState(saved.raceResults);
+      const [lastUpdate,  setLastUpdate]  = useState(saved.lastUpdate);
+      const [view,        setView]        = useState("leaderboard");
+      const [adminKey,    setAdminKey]    = useState("");
+      const [isAdmin,     setIsAdmin]     = useState(false);
+      const [loadMsg,     setLoadMsg]     = useState("");
+      const [animate,     setAnimate]     = useState(false);
+      const [fetching,    setFetching]    = useState(false);
+
+      const racesComplete = raceResults.filter(r => r.places && r.places[0]).length;
+
+      const fetchFromGitHub = async () => {
+        if (!EXCEL_URL) return;
+        setFetching(true);
+        try {
+          const res = await fetch(EXCEL_URL + "?t=" + Date.now());
+          if (!res.ok) throw new Error("fetch failed");
+          const buf = await res.arrayBuffer();
+          const { leaderboard: lb, raceResults: rr } = parseExcel(new Uint8Array(buf));
+          const now = new Date().toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" });
+          setLeaderboard(lb);
+          setRaceResults(rr);
+          setLastUpdate(now);
+          setAnimate(true);
+          setTimeout(() => setAnimate(false), 600);
+          localStorage.setItem("lb-data",    JSON.stringify(lb));
+          localStorage.setItem("rr-data",    JSON.stringify(rr));
+          localStorage.setItem("lb-updated", now);
+        } catch(err) { console.warn("Auto-fetch failed:", err); }
+        setFetching(false);
+      };
+
+      useEffect(() => {
+        fetchFromGitHub();
+        if (!EXCEL_URL) return;
+        const interval = setInterval(fetchFromGitHub, 60000); // refresh every 60 seconds
+        return () => clearInterval(interval);
+      }, []);
+
+      const handleFile = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const { leaderboard: lb, raceResults: rr } = parseExcel(new Uint8Array(ev.target.result));
+            const now = new Date().toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" });
+            setLeaderboard(lb);
+            setRaceResults(rr);
+            setLastUpdate(now);
+            setAnimate(true);
+            setTimeout(() => setAnimate(false), 600);
+            localStorage.setItem("lb-data",    JSON.stringify(lb));
+            localStorage.setItem("rr-data",    JSON.stringify(rr));
+            localStorage.setItem("lb-updated", now);
+            setLoadMsg(`✓ Loaded ${lb.length} guests · ${now}`);
+          } catch(err) {
+            setLoadMsg("✗ Could not read file — make sure you're uploading the scoresheet.");
+          }
+          e.target.value = "";
+        };
+        reader.readAsArrayBuffer(file);
+      };
+
+      const resetAll = () => {
+        if (!confirm("Clear all leaderboard data?")) return;
+        setLeaderboard([]); setRaceResults([]); setLastUpdate(null); setLoadMsg("");
+        localStorage.removeItem("lb-data");
+        localStorage.removeItem("rr-data");
+        localStorage.removeItem("lb-updated");
+      };
+
+      const medal = (i) => ["🥇","🥈","🥉"][i] || String(i+1);
+
+      const s = {
+        page:       { minHeight:"100vh", background:`linear-gradient(175deg, ${NAVY1} 0%, ${NAVY2} 50%, #2a3570 100%)`, fontFamily:"'Georgia','Times New Roman',serif", color:TEXT1, padding:"0", position:"relative", overflow:"hidden" },
+        topPattern: { position:"absolute", top:0, left:0, right:0, height:"200px", background:"repeating-linear-gradient(120deg, transparent, transparent 40px, rgba(212,63,132,0.04) 40px, rgba(212,63,132,0.04) 80px)", pointerEvents:"none" },
+        header:     { textAlign:"center", padding:"20px 16px 16px", position:"relative", zIndex:1 },
+        crown:      { fontSize:"28px", marginBottom:"4px", letterSpacing:"8px" },
+        title:      { fontSize:"15px", letterSpacing:"6px", color:GOLD, fontWeight:"normal", textTransform:"uppercase", marginBottom:"4px" },
+        subtitle:   { fontSize:"26px", fontWeight:"bold", color:TEXT1, lineHeight:1.1, marginBottom:"4px" },
+        divider:    { width:"60px", height:"2px", background:`linear-gradient(90deg, transparent, ${PINK}, transparent)`, margin:"8px auto" },
+        raceCount:  { fontSize:"12px", color:GOLD2, letterSpacing:"3px", textTransform:"uppercase", opacity:0.8 },
+        nav:        { display:"flex", justifyContent:"center", gap:"0", margin:"0 16px 16px", position:"relative", zIndex:1, flexWrap:"wrap" },
+        navBtn: (active) => ({ padding:"10px 16px", background: active ? "rgba(212,63,132,0.18)" : "transparent", border:`1px solid ${active ? PINK : "rgba(216,192,138,0.25)"}`, color: active ? PINK : TEXT3, fontFamily:"'Georgia',serif", fontSize:"11px", letterSpacing:"2px", textTransform:"uppercase", cursor:"pointer", transition:"all 0.3s" }),
+        content:    { padding:"0 12px 32px", position:"relative", zIndex:1 },
+        card: (rank) => ({
+          background: rank === 0 ? "linear-gradient(135deg, rgba(212,63,132,0.22) 0%, rgba(212,63,132,0.06) 100%)"
+            : rank < 3  ? "linear-gradient(135deg, rgba(216,192,138,0.12) 0%, rgba(34,44,86,0.4) 100%)"
+            : "rgba(255,255,255,0.04)",
+          border: rank === 0 ? "1px solid rgba(212,63,132,0.5)" : rank < 3 ? "1px solid rgba(216,192,138,0.2)" : "1px solid rgba(255,255,255,0.06)",
+          borderRadius:"10px", padding: rank === 0 ? "16px" : "12px 14px", marginBottom: rank < 3 ? "8px" : "4px",
+          display:"flex", alignItems:"center", gap:"12px",
+          transition:"all 0.4s cubic-bezier(0.34,1.56,0.64,1)",
+          animation: animate ? `slideIn 0.5s ease ${rank*0.05}s both` : "none",
+        }),
+        rankStyle: (i) => ({ fontSize: i<3?"24px":"14px", width:"36px", textAlign:"center", flexShrink:0, color: i===0?PINK:i<3?GOLD:TEXT3, fontWeight: i<3?"bold":"normal" }),
+        nameStyle: (i) => ({ flex:1, fontSize: i===0?"17px":"14px", fontWeight: i<3?"bold":"normal", color: i===0?TEXT1:i<3?TEXT2:TEXT3 }),
+        pts:   (i) => ({ fontSize: i===0?"28px":i<3?"22px":"16px", fontWeight:"bold", color: i===0?PINK:GOLD, textAlign:"right", minWidth:"40px" }),
+        ptsLbl:     { fontSize:"9px", color:GOLD2, opacity:0.6, letterSpacing:"1px", textTransform:"uppercase" },
+        raceBox:    { background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:"10px", padding:"16px", marginBottom:"10px" },
+        raceTitle:  { fontSize:"13px", letterSpacing:"3px", color:GOLD, textTransform:"uppercase", marginBottom:"4px" },
+        placeRow:   { display:"flex", justifyContent:"space-between", padding:"5px 0", borderBottom:"1px solid rgba(255,255,255,0.05)", fontSize:"13px" },
+        adminBox:   { background:"rgba(0,0,0,0.25)", border:`1px solid rgba(216,192,138,0.2)`, borderRadius:"10px", padding:"20px", marginBottom:"12px" },
+        input:      { width:"100%", padding:"10px 12px", background:"rgba(255,255,255,0.07)", border:`1px solid rgba(216,192,138,0.25)`, borderRadius:"6px", color:TEXT1, fontFamily:"'Georgia',serif", fontSize:"14px", outline:"none", boxSizing:"border-box", marginBottom:"8px" },
+        btn:        { padding:"12px 20px", background:`linear-gradient(135deg, ${PINK}, #b8336e)`, border:"none", borderRadius:"6px", color:"#fff", fontFamily:"'Georgia',serif", fontSize:"13px", fontWeight:"bold", letterSpacing:"1px", cursor:"pointer", textTransform:"uppercase", width:"100%" },
+        btnDanger:  { padding:"8px 16px", background:"transparent", border:"1px solid rgba(192,57,43,0.5)", borderRadius:"6px", color:"#e74c3c", fontFamily:"'Georgia',serif", fontSize:"11px", cursor:"pointer", marginTop:"12px", width:"100%" },
+        fileLabel:  { display:"block", padding:"14px 20px", background:"rgba(216,192,138,0.1)", border:`2px dashed rgba(216,192,138,0.35)`, borderRadius:"8px", color:GOLD2, fontFamily:"'Georgia',serif", fontSize:"13px", textAlign:"center", cursor:"pointer", marginBottom:"10px", letterSpacing:"1px" },
+        scoring:    { background:"rgba(216,192,138,0.06)", border:`1px solid rgba(216,192,138,0.15)`, borderRadius:"10px", padding:"14px 16px", marginBottom:"16px" },
+        scoringTitle:{ fontSize:"11px", letterSpacing:"3px", color:GOLD, textTransform:"uppercase", marginBottom:"8px" },
+        noData:     { textAlign:"center", padding:"40px 20px", color:TEXT3, opacity:0.4, fontSize:"14px", fontStyle:"italic" },
+        updated:    { textAlign:"center", fontSize:"11px", color:GOLD2, opacity:0.5, letterSpacing:"2px", marginTop:"20px", textTransform:"uppercase" },
+      };
+
+      return (
+        <div style={s.page}>
+          <style>{`@keyframes slideIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }`}</style>
+          <div style={s.topPattern}/>
+
+          {/* ── Header ── */}
+          <div style={s.header}>
+            <img src="logo-white.png" alt="Kore Systems"
+                 style={{ height:"64px", width:"auto", marginBottom:"-6px", opacity:0.92 }}/>
+            <div style={s.crown}>♛</div>
+            <div style={s.title}>Royal Ascot 2026</div>
+            <div style={s.subtitle}>Ladies Day Tipping</div>
+            <div style={s.divider}/>
+            <div style={s.raceCount}>{racesComplete} of 6 races complete</div>
+          </div>
+
+          {/* ── Nav ── */}
+          <div style={s.nav}>
+            {["leaderboard","races","scoring"].map(v => (
+              <button key={v} style={s.navBtn(view===v)} onClick={()=>setView(v)}>
+                {v==="scoring"?"Points":v.charAt(0).toUpperCase()+v.slice(1)}
+              </button>
+            ))}
+            <button style={s.navBtn(view==="admin")} onClick={()=>setView("admin")}>Admin</button>
+          </div>
+
+          <div style={s.content}>
+
+            {/* ── Leaderboard ── */}
+            {view==="leaderboard" && (
+              <>
+              {EXCEL_URL && (
+                <div style={{textAlign:"center",marginBottom:"12px"}}>
+                  <button onClick={fetchFromGitHub} disabled={fetching} style={{background:"transparent",border:`1px solid rgba(216,192,138,0.3)`,color:GOLD2,fontFamily:"'Georgia',serif",fontSize:"11px",letterSpacing:"2px",padding:"6px 14px",borderRadius:"20px",cursor:fetching?"not-allowed":"pointer",opacity:fetching?0.5:1}}>
+                    {fetching ? "Refreshing…" : "↻ Refresh Scores"}
+                  </button>
+                </div>
+              )}
+              {leaderboard.length===0
+                ? <div style={s.noData}>No data loaded yet.<br/>The leaderboard will appear once the Excel is uploaded.</div>
+                : leaderboard.map((g,i) => (
+                  <div key={i} style={s.card(i)}>
+                    <div style={s.rankStyle(i)}>{medal(i)}</div>
+                    <div style={s.nameStyle(i)}>
+                      {g.name}
+                      {i===0 && g.total>0 && (
+                        <div style={{fontSize:"10px",color:"rgba(212,63,132,0.7)",marginTop:"2px"}}>
+                          {g.winners} winner{g.winners!==1?"s":""} picked
+                        </div>
+                      )}
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={s.pts(i)}>{g.total}</div>
+                      <div style={s.ptsLbl}>pts</div>
+                    </div>
+                  </div>
+                ))
+              }
+              </>
+            )}
+
+            {/* ── Races ── */}
+            {view==="races" && RACES.map((race,i) => {
+              const res = raceResults[i];
+              return (
+                <div key={i} style={s.raceBox}>
+                  <div style={s.raceTitle}>{race.name}</div>
+                  <div style={{fontSize:"11px",color:TEXT3,opacity:0.5,marginBottom:"10px"}}>{race.time} — {race.grade}</div>
+                  {res && res.places && res.places[0] ? (
+                    PLACE_LABELS.map((label,p) => res.places[p] ? (
+                      <div key={p} style={{...s.placeRow, borderBottom: p===5?"none":s.placeRow.borderBottom}}>
+                        <span style={{color:TEXT3,opacity:0.5,width:"30px",flexShrink:0}}>{label}</span>
+                        <span style={{flex:1,textAlign:"right",color:p===0?GOLD:TEXT1,fontWeight:p===0?"bold":"normal"}}>{res.places[p]}</span>
+                        <span style={{color:GOLD2,marginLeft:"8px",fontSize:"11px",width:"40px",textAlign:"right",flexShrink:0}}>{POINTS[p+1]} pts</span>
+                      </div>
+                    ) : null)
+                  ) : (
+                    <div style={{color:TEXT3,opacity:0.3,fontStyle:"italic",fontSize:"13px"}}>Awaiting result...</div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* ── Scoring guide ── */}
+            {view==="scoring" && (
+              <>
+                <div style={s.scoring}>
+                  <div style={s.scoringTitle}>Points per place</div>
+                  {Object.entries(POINTS).map(([place,pts])=>(
+                    <div key={place} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",fontSize:"14px"}}>
+                      <span style={{color:TEXT3}}>{PLACE_LABELS[place-1]} place</span>
+                      <span style={{color:GOLD,fontWeight:"bold"}}>{pts} pts</span>
+                    </div>
+                  ))}
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",fontSize:"14px",marginTop:"4px"}}>
+                    <span style={{color:TEXT3,opacity:0.4}}>Outside top 6</span>
+                    <span style={{color:TEXT3,opacity:0.4}}>0 pts</span>
+                  </div>
+                </div>
+                <div style={s.scoring}>
+                  <div style={s.scoringTitle}>6 races today</div>
+                  {RACES.map((r,i)=>(
+                    <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",fontSize:"13px"}}>
+                      <span style={{color:TEXT1}}>{r.name}</span>
+                      <span style={{color:GOLD2,opacity:0.7}}>{r.time}</span>
+                    </div>
+                  ))}
+                  <div style={{marginTop:"12px",fontSize:"12px",color:TEXT3,opacity:0.4,textAlign:"center"}}>
+                    Maximum possible: 60 pts · Tiebreaker: most winners picked
+                  </div>
+                </div>
+   
