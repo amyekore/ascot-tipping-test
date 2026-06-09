@@ -16,9 +16,8 @@
     const { useState, useEffect } = React;
 
     // ── GitHub Auto-Fetch ────────────────────────────────────────────────────────
-    // After creating your GitHub repo, paste the raw URL to your Excel file here.
-    // Format: https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO_NAME/main/ascot_tipping_scoresheet.xlsx
-    const EXCEL_URL = "https://raw.githubusercontent.com/amyekore/ascot-tipping/main/ascot_tipping_scoresheet.xlsx";
+    // Points to the Excel file in the TEST repo
+    const EXCEL_URL = "https://raw.githubusercontent.com/amyekore/ascot-tipping-test/main/TEST_ascot_tipping_scoresheet.xlsx";
     // ────────────────────────────────────────────────────────────────────────────
 
     const RACES = [
@@ -316,4 +315,60 @@
                     Maximum possible: 60 pts · Tiebreaker: most winners picked
                   </div>
                 </div>
-   
+              </>
+            )}
+
+            {/* ── Admin ── */}
+            {view==="admin" && !isAdmin && (
+              <div style={s.adminBox}>
+                <div style={{...s.raceTitle,marginBottom:"12px"}}>Admin Access</div>
+                <input style={s.input} type="password" placeholder="Enter admin code"
+                  value={adminKey} onChange={e=>setAdminKey(e.target.value)}
+                  onKeyDown={e=>{ if(e.key==="Enter"&&adminKey===ADMIN_PASS) setIsAdmin(true); }}/>
+                <button style={s.btn} onClick={()=>{ if(adminKey===ADMIN_PASS) setIsAdmin(true); }}>Unlock</button>
+              </div>
+            )}
+
+            {view==="admin" && isAdmin && (
+              <div style={s.adminBox}>
+                <div style={{...s.raceTitle,marginBottom:"6px"}}>Refresh Leaderboard from Excel</div>
+                <div style={{fontSize:"12px",color:TEXT3,opacity:0.6,marginBottom:"16px",lineHeight:1.6}}>
+                  Update your <strong style={{color:TEXT2}}>ascot_tipping_scoresheet.xlsx</strong> with the latest picks and results, then upload it here to refresh the leaderboard.
+                </div>
+
+                <label style={s.fileLabel}>
+                  📂 &nbsp; Tap to select Excel file
+                  <input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:"none"}}/>
+                </label>
+
+                {loadMsg && (
+                  <div style={{
+                    padding:"10px 14px", borderRadius:"6px", fontSize:"12px", marginBottom:"10px",
+                    background: loadMsg.startsWith("✓") ? "rgba(56,161,105,0.15)" : "rgba(192,57,43,0.15)",
+                    color: loadMsg.startsWith("✓") ? "#68d391" : "#fc8181",
+                    border: `1px solid ${loadMsg.startsWith("✓") ? "rgba(56,161,105,0.3)" : "rgba(192,57,43,0.3)"}`,
+                  }}>{loadMsg}</div>
+                )}
+
+                {leaderboard.length>0 && (
+                  <div style={{fontSize:"11px",color:TEXT3,opacity:0.5,marginBottom:"12px",textAlign:"center"}}>
+                    {leaderboard.length} guests loaded · last updated {lastUpdate}
+                  </div>
+                )}
+
+                <button style={s.btnDanger} onClick={resetAll}>Clear All Data</button>
+              </div>
+            )}
+
+            {lastUpdate && view!=="admin" && (
+              <div style={s.updated}>Last updated {lastUpdate}</div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
